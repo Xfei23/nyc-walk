@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NYC Walking Guide</title>
+    <!-- Leaflet CSS & JS for the Map -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <style>
+        body { font-family: -apple-system, sans-serif; text-align: center; padding: 20px; background: #f0f2f5; }
+        .card { background: white; padding: 30px; border-radius: 15px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); max-width: 500px; margin: auto; }
+        
+        button { width: 100%; padding: 15px; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; cursor: pointer; margin-top: 10px; transition: 0.2s; }
+        .btn-primary { background: #0070f3; color: white; }
+        .btn-secondary { background: #e0e0e0; color: #333; }
+        
+        /* Map and Filters */
+        #map { height: 250px; width: 100%; margin-top: 15px; border-radius: 8px; display: none; z-index: 1;}
+
+        .filter-group { display: none; justify-content: space-around; margin: 20px 0 10px; }
+        .filter-btn { padding: 8px; width: 30%; font-size: 14px; margin: 0; background: #eee; color: #333; border-radius: 20px; }
+        .filter-btn.active { background: #0070f3; color: white; }
+
+        /* Recommendation List */
+        .rec-list { list-style: none; padding: 0; text-align: left; }
+        .rec-item { padding: 15px 0; border-bottom: 1px solid #eee; }
+        .rec-item:last-child { border-bottom: none; }
+        .rec-title { font-weight: bold; font-size: 16px; color: #333; display: flex; justify-content: space-between; align-items: center; }
+        .rec-meta { font-size: 13px; color: #666; margin: 6px 0; }
+        .rec-desc { font-size: 14px; color: #444; }
+        .badge { font-size: 11px; padding: 3px 8px; border-radius: 12px; color: white; font-weight: normal; }
+        .badge.food { background: #ff9800; }
+        .badge.activity { background: #34a853; }
+        .map-link { display: inline-block; margin-top: 8px; font-size: 13px; color: #0070f3; text-decoration: none; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h1>🗽 NYC Guide</h1>
+        <p>Stand on a corner and tap below:</p>
+        
+        <button class="btn-primary" onclick="getLocation()">Where am I? (GPS)</button>
+
+        <p style="margin: 15px 0 5px; font-size: 14px; color: #666;">Or enter coordinates manually:</p>
+        <div style="display:flex; gap:10px;">
+           <input type="text" id="manual-coords" placeholder="e.g. 40.7484, -73.9857" style="flex:1; padding: 10px; border: 1px solid #ccc; border-radius: 8px; font-family: inherit;">
+           <button class="btn-secondary" onclick="getManualLocation()" style="width:auto; margin:0; background: #6c757d; color: white; padding:10px 15px;">Search</button>
+        </div>
+        
+        <!-- The Map -->
+        <div id="map"></div>
+
+        <!-- The Filters -->
+        <div id="filter-group" class="filter-group">
+            <button class="filter-btn active" onclick="setFilter('All', this)">All</button>
+            <button class="filter-btn" onclick="setFilter('Food', this)">🍔 Food</button>
+            <button class="filter-btn" onclick="setFilter('Activity', this)">🏛️ Activities</button>
+        </div>
+
+        <!-- Results output -->
+        <div id="result" style="margin-top:15px;">Your recommendation will appear here...</div>
+
+        <button class="btn-secondary" onclick="resetPage()" style="margin-top:20px;">Reset Everything</button>
+    </div>
+
+    <script>
+        let currentLat = null;
+        let currentLon = null;
+        let currentActiveList = [];
+        let map = null;
+        let markers = [];
+        let currentFilter = 'All';
+
+        // Databases updated with exact latitude/longitude coordinates to allow Haversine distance calculations
+        const midtown = [
+            { name: "The Halal Guys", type: "Food", cost: "$", range: "$9 - $12", rating: "4.5", address: "53rd & 6th Ave", desc: "Started as a simple hot dog cart in 1990 before pivoting to halal food for cab drivers. Now a global phenomenon, their legendary chicken & gyro combo platters are a NYC rite of passage. Don't underestimate the heat level of their famous red sauce!", lat: 40.7618, lon: -73.9776 },
+            { name: "2 Bros Pizza", type: "Food", cost: "$", range: "$1.50 - $4", rating: "4.0", address: "8th Ave & 38th", desc: "The undisputed king of the NYC dollar slice (though prices have crept up slightly due to inflation). Serving piping hot, quintessential New York street pizza around the clock. Perfect for a quick, exceptionally cheap refuel while exploring.", lat: 40.7543, lon: -73.9924 },
+            { name: "Los Tacos No. 1", type: "Food", cost: "$", range: "$4 - $15", rating: "4.7", address: "229 W 43rd St", desc: "Born from a mission to bring true Tijuana/Baja flavor to the East Coast. Expect a fast-moving line that leads to freshly made corn tortillas and perfectly marinated adobada pork. Arguably the best, most unpretentious taco experience in Manhattan.", lat: 40.7570, lon: -73.9877 },
+            { name: "Margon", type: "Food", cost: "$", range: "$10 - $18", rating: "4.6", address: "136 W 46th St", desc: "A beloved, no-frills Cuban luncheonette hidden in plain sight amidst Times Square tourist traps. Famous for massive plates of roast pork, octopus salad, and Cuban sandwiches at low prices. A chaotic, vibrant, and essential lunch spot.", lat: 40.7580, lon: -73.9840 },
+            { name: "Empanada Mama", type: "Food", cost: "$", range: "$4 - $12", rating: "4.5", address: "765 9th Ave", desc: "A vibrant 24-hour haven specializing in massive, generously stuffed Colombian empanadas. With dozens of creative flavor combinations baked or fried to crispy perfection, it's impossible to leave hungry. It's the ultimate affordable late-night comfort food.", lat: 40.7635, lon: -73.9885 },
+            { name: "The Museum of Modern Art (MoMA)", type: "Activity", cost: "$$", range: "$30", rating: "4.7", address: "11 W 53rd St", desc: "One of the largest and most influential museums of modern art in the entire world. Home to unmistakable masterpieces like Van Gogh's 'The Starry Night' and Dalí's 'The Persistence of Memory'. The architecture itself is breathtaking.", lat: 40.7614, lon: -73.9776 },
+            { name: "Chelsea Art Galleries", type: "Activity", cost: "Free", range: "$0", rating: "4.8", address: "West 20th St", desc: "A densely packed neighborhood boasting over 300 stunning contemporary galleries that are completely free to enter. Wander from warehouse to warehouse discovering cutting-edge paintings, sculptures, and immersive installations. Thursday nights often feature free opening receptions.", lat: 40.7454, lon: -74.0058 },
+            { name: "The High Line", type: "Activity", cost: "Free", range: "$0", rating: "4.8", address: "34th St", desc: "A massive, brilliantly repurposed elevated freight rail line transformed into a 1.45-mile greenway. Offers an incredible, uninterrupted walking experience above the chaotic city streets with stellar views of the Hudson River. Features fantastic public art installations.", lat: 40.7554, lon: -74.0041 },
+            { name: "Intrepid Museum", type: "Activity", cost: "$$", range: "$36", rating: "4.7", address: "Pier 86", desc: "An incredible maritime and military history museum housed inside the legendary aircraft carrier USS Intrepid. Climb aboard to explore real fighter jets, submarines, and the actual Space Shuttle Pavilion. Provides a deeply immersive look into 20th-century aviation.", lat: 40.7637, lon: -73.9992 },
+            { name: "Paris Theater", type: "Activity", cost: "$$", range: "$18", rating: "4.6", address: "4 W 58th St", desc: "A historic, beautifully preserved single-screen cinema operating since 1948 right off Fifth Avenue. Saved from closure by Netflix, it now hosts exclusive theatrical runs, classic retrospectives, and indie premieres. Features plush blue seating and true old New York charm.", lat: 40.7638, lon: -73.9743 }
+        ];
+
+        const downtown = [
+            { name: "Mamoun's Falafel", type: "Food", cost: "$", range: "$5 - $10", rating: "4.6", address: "119 MacDougal", desc: "Operating continuously since 1971, this is officially the oldest falafel restaurant in New York City. They serve deeply authentic, heavily spiced Middle Eastern food to a massive crowd. Their falafel sandwich is an insanely cheap, timeless Greenwich Village staple.", lat: 40.7303, lon: -74.0004 },
+            { name: "Joe's Pizza", type: "Food", cost: "$", range: "$4 - $6", rating: "4.6", address: "7 Carmine St", desc: "Founded by Joe Pozzuoli from Naples in 1975, this is the archetypal Greenwich Village slice joint. Visited by countless celebrities over the decades, the walls are plastered with photos proving its legendary status. The crust is thin and the cheese is beautifully blistered.", lat: 40.7306, lon: -74.0021 },
+            { name: "Wah Fung No 1", type: "Food", cost: "$", range: "$5 - $8", rating: "4.8", address: "79 Chrystie St", desc: "Famous for drawing lines wrapped around the block in Chinatown for its impossibly cheap, massive portions. They expertly chop marinated, sweet, and savory roast pork (char siu) and pile it high over steaming rice. An absolute must-visit for anyone craving Chinese BBQ.", lat: 40.7173, lon: -73.9944 },
+            { name: "Vanessa's Dumpling", type: "Food", cost: "$", range: "$3 - $8", rating: "4.4", address: "118 Eldridge", desc: "A legendary Chinatown institution famous for bringing massive, crispy pan-fried dumplings to the masses for pocket change. Beyond dumplings, their sesame pancake sandwiches filled with Peking duck are incredibly satisfying. Fast-paced, chaotic, and an essential dining experience.", lat: 40.7183, lon: -73.9918 },
+            { name: "Kopitiam", type: "Food", cost: "$", range: "$6 - $16", rating: "4.6", address: "151 E Broadway", desc: "A charming, award-winning Malaysian coffeehouse bringing authentic Nyonya cuisine to the Lower East Side. Famous for their kaya butter toast, rich white coffee, and incredibly flavorful budget-friendly noodle dishes. A relaxing, casual spot perfect for a mid-day culinary escape.", lat: 40.7139, lon: -73.9918 },
+            { name: "Whitney Museum of American Art", type: "Activity", cost: "$$", range: "$30", rating: "4.6", address: "99 Gansevoort St", desc: "Designed by Renzo Piano, this striking asymmetrical building is fully dedicated to American art. Features a spectacular collection of 20th-century and contemporary masterpieces alongside bold new exhibitions. The outdoor terraces offer stunning views of the Meatpacking District.", lat: 40.7396, lon: -74.0089 },
+            { name: "Film Forum", type: "Activity", cost: "$", range: "$11 - $17", rating: "4.8", address: "209 W Houston St", desc: "New York's preeminent independent cinema operating as a nonprofit since 1970. It strictly curates brilliant indie premieres, foreign documentaries, and meticulous restorations of classic cinema. The concessions are charmingly old-school, and the crowds are notoriously passionate.", lat: 40.7289, lon: -74.0044 },
+            { name: "Tenement Museum", type: "Activity", cost: "$$", range: "$30", rating: "4.8", address: "103 Orchard St", desc: "Provides a deeply moving, immersive look into the lives of NYC’s working-class immigrants in the 19th and 20th centuries. Visitors take guided walking tours through painstakingly restored, actual tenement apartments. It is a profound, essential piece of cultural fabric.", lat: 40.7188, lon: -73.9901 },
+            { name: "Brooklyn Bridge", type: "Activity", cost: "Free", range: "$0", rating: "4.9", address: "City Hall", desc: "Completed in 1883, this stunning limestone and granite suspension bridge is an engineering marvel. Walking its 1.1-mile elevated pedestrian promenade offers breathtaking, iconic views of the Manhattan skyline. An absolute must-do activity that captures the scale of the city.", lat: 40.7128, lon: -74.0041 },
+            { name: "Staten Island Ferry", type: "Activity", cost: "Free", range: "$0", rating: "4.7", address: "Whitehall", desc: "An iconic, completely free passenger ferry running 24/7 across the New York Harbor. The 25-minute voyage provides arguably the absolute best, closest free views of the Statue of Liberty available. It functions as a commuter lifeline but doubles as a world-class cruise.", lat: 40.7024, lon: -74.0125 }
+        ];
+
+        const uptown = [
+            { name: "Absolute Bagels", type: "Food", cost: "$", range: "$2 - $8", rating: "4.7", address: "2788 Broadway", desc: "Widely regarded by locals as baking the absolute best, most authentic bagel in Manhattan. Boiled and baked in-house all day, resulting in a perfectly crackling crust and dense, chewy interior. Expect a fast-moving line, cash-only transactions, and generous smashes of cream cheese.", lat: 40.8025, lon: -73.9674 },
+            { name: "Koronet Pizza", type: "Food", cost: "$", range: "$5 - $7", rating: "4.3", address: "2848 Broadway", desc: "A Columbia University staple famous since 1981 for serving hilariously massive, arm-length slices of pizza. A single 'Jumbo' slice requires two paper plates and is more than enough for a full meal. A highly entertaining, deeply satisfying, and incredibly cheap late-night institution.", lat: 40.8049, lon: -73.9667 },
+            { name: "Roti Roll", type: "Food", cost: "$", range: "$7 - $12", rating: "4.6", address: "994 Amsterdam", desc: "A critically acclaimed hole-in-the-wall serving sensational 'Frankies'—Bombay-style street food. They take incredibly flavorful, heavily spiced Indian curries and wrap them tightly in warm, flaky paratha bread. An absolute flavor bomb that is easy to eat on the go.", lat: 40.8018, lon: -73.9677 },
+            { name: "Taqueria y Fonda", type: "Food", cost: "$", range: "$8 - $18", rating: "4.5", address: "968 Amsterdam", desc: "A cozy, unassuming neighborhood gem serving massive, incredibly comforting Mexican staples. Known for their gigantic, fully-loaded burritos and authentic tamales paired with complex mole sauces. A filling, deeply satisfying budget meal perfect for fueling up.", lat: 40.8005, lon: -73.9680 },
+            { name: "Levain Bakery", type: "Food", cost: "$$", range: "$5 - $8", rating: "4.8", address: "167 W 74th St", desc: "World-famous for their monstrous, six-ounce cookies that are perfectly crispy on the outside and gooey on the inside. The chocolate chip walnut cookie is legendary, pulling tourists and locals alike into long lines. One cookie is easily a meal in itself.", lat: 40.7799, lon: -73.9803 },
+            { name: "The Metropolitan Museum of Art", type: "Activity", cost: "$$", range: "$30", rating: "4.9", address: "1000 5th Ave", desc: "The largest art museum in the Americas, holding over two million works spanning 5,000 years of global culture. You can spend an entire week exploring everything from ancient Egyptian temples to stunning European paintings. An absolute pillar of human history.", lat: 40.7794, lon: -73.9632 },
+            { name: "American Museum of Natural History", type: "Activity", cost: "$$", range: "$28", rating: "4.8", address: "200 Central Park W", desc: "A massive, awe-inspiring complex featuring sprawling halls of reconstructed dinosaur skeletons and prehistoric fossils. Famous for its jaw-dropping 94-foot blue whale model floating from the ceiling. A phenomenal, deeply educational experience for all ages.", lat: 40.7813, lon: -73.9740 },
+            { name: "Lincoln Center", type: "Activity", cost: "$$", range: "$25+", rating: "4.8", address: "10 Lincoln Center Plaza", desc: "A sprawling 16.3-acre campus establishing itself as the premier performing arts destination in the world. Home to the illustrious Metropolitan Opera, New York City Ballet, and the New York Philharmonic. Even just walking around the illuminated fountain plaza is inspiring.", lat: 40.7725, lon: -73.9835 },
+            { name: "AMC Lincoln Square IMAX", type: "Activity", cost: "$$", range: "$20 - $28", rating: "4.6", address: "1998 Broadway", desc: "Features the largest true IMAX screen in the United States, standing a staggering six stories tall. The audio-visual experience here is unparalleled, making it the ultimate destination for massive blockbusters. A true mecca for cinephiles wanting the most premium experience possible.", lat: 40.7744, lon: -73.9822 },
+            { name: "Central Park", type: "Activity", cost: "Free", range: "$0", rating: "4.9", address: "86th St", desc: "A sprawling 843-acre masterpiece of landscape architecture situated right in the middle of Manhattan. Features lakes, theaters, ice rinks, fountains, and the stunning 1.5-mile Reservoir running track. It is the brilliant, green lungs of the city and completely free to explore.", lat: 40.7858, lon: -73.9602 }
+        ];
+
+        const generic = [
+            { name: "L'Industrie Pizzeria", type: "Food", cost: "$", range: "$5 - $9", rating: "4.8", address: "254 S 2nd St", desc: "Leading the new-school Brooklyn pizza movement by combining classic NYC style with premium Italian ingredients. Their crust is fermented beautifully, topped with imported burrata, fresh basil, and high-quality olive oil. Arguably serving the finest elevated slice in the five boroughs.", lat: 40.7115, lon: -73.9610 },
+            { name: "Los Mariscos", type: "Food", cost: "$", range: "$5 - $15", rating: "4.7", address: "Chelsea Market", desc: "Hidden down an inconspicuous hallway inside Chelsea Market, this spot feels like a secret Mexican escape. They serve unbelievably fresh, affordable fish tacos, spicy ceviche, and strong margaritas in a bustling atmosphere. An incredible seafood bargain.", lat: 40.7424, lon: -74.0060 },
+            { name: "Tacos El Bronco", type: "Food", cost: "$", range: "$3 - $10", rating: "4.7", address: "Sunset Park", desc: "Starting as a humble food truck, this Sunset Park legend serves some of the best, most authentic tacos in the city. Famous for their incredibly tender al pastor and rich, complex suadero topped with fresh radishes and lime. A true outer-borough culinary pilgrimage site.", lat: 40.6465, lon: -74.0112 },
+            { name: "Birria-Landia", type: "Food", cost: "$", range: "$4 - $12", rating: "4.8", address: "Jackson Hts", desc: "A revolutionary food truck that ignited the massive birria taco craze across New York City. They specialize entirely in deeply savory, slow-cooked beef stew tacos served with a rich, fiery consommé for dipping. It is an intensely flavorful, messy, and unforgettable street food.", lat: 40.7460, lon: -73.8842 },
+            { name: "Jackson Diner", type: "Food", cost: "$$", range: "$15 - $20", rating: "4.4", address: "Jackson Hts", desc: "A legendary institution in Jackson Heights that has been serving exceptional Northern Indian cuisine for decades. Famous for offering a massive, incredibly reasonably priced, high-quality all-you-can-eat lunch buffet. The samosas, chicken tikka masala, and fresh naan are spectacular.", lat: 40.7483, lon: -73.8845 },
+            { name: "Museum of the Moving Image", type: "Activity", cost: "$$", range: "$20", rating: "4.8", address: "Astoria", desc: "A visually stunning museum in Astoria entirely dedicated to the art, history, and technology of film and television. Features incredible interactive exhibits, historic cameras, playable classic arcade games, and authentic movie props. A truly unique, deeply engaging experience.", lat: 40.7562, lon: -73.9239 },
+            { name: "Brooklyn Museum", type: "Activity", cost: "$$", range: "$20", rating: "4.7", address: "Brooklyn", desc: "New York's second-largest art museum, housed in a magnificent Beaux-Arts building on the edge of Prospect Park. Offers incredibly diverse, globally spanning collections alongside cutting-edge, progressive contemporary exhibitions. A far more relaxed alternative to crowded Manhattan spots.", lat: 40.6712, lon: -73.9636 },
+            { name: "Nitehawk Cinema", type: "Activity", cost: "$$", range: "$16 - $20", rating: "4.6", address: "Williamsburg", desc: "An independent, trailblazing dine-in theater strictly focused on brilliant cinematic curation and heavy nostalgia. They pair fantastic indie drops, midnight cult classics, and new blockbusters with themed food and craft cocktails. A wildly fun, premium movie-going experience.", lat: 40.7161, lon: -73.9609 },
+            { name: "NYC Ferry", type: "Activity", cost: "$4", range: "$4", rating: "4.8", address: "Pier 11", desc: "An incredibly cost-effective public transit system that functions flawlessly as a world-class sightseeing harbor cruise. For just four dollars, you can ride across the East River while sipping a beer from their onboard concession stand. It offers massive, sweeping skyline views.", lat: 40.7045, lon: -74.0069 },
+            { name: "Roosevelt Island Tram", type: "Activity", cost: "$2.90", range: "$2.90", rating: "4.7", address: "E 59th St", desc: "An iconic, brilliant red commuter cable car suspended hundreds of feet majestically over the East River. It provides a thrilling, highly unique aerial perspective of the dense Upper East Side architecture and waterfront. The ride only takes a few minutes but provides memories forever.", lat: 40.7610, lon: -73.9642 }
+        ];
+
+        // Haversine Distance Formula (calculates miles between two GPS points)
+        function getDistance(lat1, lon1, lat2, lon2) {
+            const R = 3958.8; // Earth radius in miles
+            const dLat = (lat2 - lat1) * Math.PI / 180;
+            const dLon = (lon2 - lon1) * Math.PI / 180;
+            const a = 
+                0.5 - Math.cos(dLat)/2 + 
+                Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
+                (1 - Math.cos(dLon))/2;
+            return R * 2 * Math.asin(Math.sqrt(a));
+        }
+
+        // Initialize and Update Leaflet Map
+        function updateMap(lat, lon, places) {
+            document.getElementById('map').style.display = "block";
+            
+            if (!map) {
+                map = L.map('map').setView([lat, lon], 14);
+                // Free, clean map tiles
+                L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+                    attribution: '&copy; OpenStreetMap &copy; CARTO'
+                }).addTo(map);
+            } else {
+                map.setView([lat, lon], 14);
+            }
+
+            // Clear old markers completely
+            markers.forEach(m => map.removeLayer(m));
+            markers = [];
+
+            // Add User Pin (Blue)
+            const userIcon = L.icon({
+                iconUrl: 'https://cdn-icons-png.flaticon.com/512/1004/1004093.png',
+                iconSize: [30, 30]
+            });
+            const userMarker = L.marker([lat, lon], {icon: userIcon}).addTo(map).bindPopup("<b>📍 You are here</b>").openPopup();
+            markers.push(userMarker);
+
+            // Add Destination Pins (Default leaflet blue/grey)
+            places.forEach((p, idx) => {
+                const marker = L.marker([p.lat, p.lon]).addTo(map).bindPopup(`<b>${idx + 1}. ${p.name}</b><br>${p.desc}`);
+                markers.push(marker);
+            });
+        }
+
+        // Handle the visual switching of Filter Tabs
+        function setFilter(type, btnElement) {
+            currentFilter = type;
+            document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+            btnElement.classList.add('active');
+            renderUI();
+        }
+
+        // The core rendering engine
+        function renderUI() {
+            if (!currentLat || !currentLon || !currentActiveList.length) return;
+
+            // 1. Calculate Exact Distance and Filter Pricing
+            let processedList = currentActiveList.map(item => {
+                return { ...item, dist: getDistance(currentLat, currentLon, item.lat, item.lon) };
+            }).filter(item => item.cost !== '$$$'); // Allow cheap & medium, exclude explicitly expensive 
+
+            // Sort by nearest distance first
+            processedList.sort((a, b) => a.dist - b.dist);
+
+            // Separate into top 10 food and top 10 activities (regardless of how far, as we removed the hard 1-mile cutoff)
+            const foodSpots = processedList.filter(item => item.type === 'Food').slice(0, 10);
+            const activitySpots = processedList.filter(item => item.type === 'Activity').slice(0, 10);
+
+            // 3. Render the HTML List
+            const res = document.getElementById('result');
+            let html = '';
+
+            const buildListHTML = (title, items) => {
+                if (items.length === 0) return `<p style="padding:10px; color:#777; font-size:14px; background:#f9f9f9; border-radius:8px;">No ${title.toLowerCase()} found.</p>`;
+                
+                let listHtml = `<h3 style="text-align:left; color:#333; margin-top: 25px; border-bottom: 2px solid #eee; padding-bottom: 5px;">${title}</h3><ul class="rec-list">`;
+                items.forEach((item, index) => {
+                    const badgeClass = item.type === 'Activity' ? 'activity' : 'food';
+                    
+                    // Use Place Title + "NYC" into the Maps search query rather than generic GPS coordinates
+                    const mapsUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(item.name + ' NYC')}`;
+                    
+                    // Flag results exceeding 1 mile
+                    const distanceLabel = item.dist <= 1.0 
+                        ? `📍 <b>${item.dist.toFixed(2)} mi away</b>` 
+                        : `📍 <b style="color: #d9534f;">${item.dist.toFixed(2)} mi away ⚠️ (Over 1 mile walk)</b>`;
+                    
+                    listHtml += `
+                        <li class="rec-item">
+                            <div class="rec-title">
+                                <span>${index + 1}. ${item.name}</span>
+                                <span class="badge ${badgeClass}">${item.type}</span>
+                            </div>
+                            <div class="rec-meta">
+                                ${distanceLabel} &nbsp;•&nbsp; ⭐ ${item.rating} &nbsp;•&nbsp; 💰 ${item.cost} (${item.range})
+                            </div>
+                            <div class="rec-desc">${item.desc}</div>
+                            <a href="${mapsUrl}" target="_blank" class="map-link">🗺️ Google Maps Directions →</a>
+                        </li>
+                    `;
+                });
+                listHtml += '</ul>';
+                return listHtml;
+            };
+
+            let pinsToMap = [];
+            if (currentFilter === 'All') {
+                html += buildListHTML('🍔 Top 10 Food', foodSpots);
+                html += buildListHTML('🏛️ Top 10 Activities', activitySpots);
+                pinsToMap = [...foodSpots, ...activitySpots];
+            } else if (currentFilter === 'Food') {
+                html += buildListHTML('🍔 Top 10 Food', foodSpots);
+                pinsToMap = foodSpots;
+            } else if (currentFilter === 'Activity') {
+                html += buildListHTML('🏛️ Top 10 Activities', activitySpots);
+                pinsToMap = activitySpots;
+            }
+
+            res.innerHTML = html;
+
+            // 4. Update the visual Leaflet map above the list
+            updateMap(currentLat, currentLon, pinsToMap);
+        }
+
+        // Gateway for taking coordinates and setting the app state
+        function triggerLocationProcessing(lat, lon) {
+            currentLat = lat;
+            currentLon = lon;
+
+            const res = document.getElementById('result');
+            
+            // NYC bounds check
+            if (lat < 40.47 || lat > 40.91 || lon < -74.25 || lon > -73.70) {
+                document.getElementById('map').style.display = "none";
+                document.getElementById('filter-group').style.display = "none";
+                res.innerHTML = "❌ <b>Out of Bounds</b><br>This guide only works within the 5 boroughs of New York City.";
+                return;
+            }
+
+            document.getElementById('filter-group').style.display = "flex";
+
+            // Make the entire NYC database accessible at once
+            currentActiveList = [...midtown, ...downtown, ...uptown, ...generic];
+
+            renderUI();
+        }
+
+        // Triggered by GPS Button
+        function getLocation() {
+            document.getElementById('result').innerHTML = "Fetching your location... 📡";
+            const options = { enableHighAccuracy: false, timeout: 10000, maximumAge: 60000 };
+            if (navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition(
+                    pos => triggerLocationProcessing(pos.coords.latitude, pos.coords.longitude), 
+                    err => { document.getElementById('result').innerHTML = "❌ Error: " + (err.message || "Could not fetch location."); }, 
+                    options
+                );
+            }
+        }
+
+        // Triggered by Manual Search Button
+        function getManualLocation() {
+            const input = document.getElementById('manual-coords').value;
+            const parts = input.replace(/\s+/g, '').split(',');
+            if (parts.length !== 2 || isNaN(parts[0]) || isNaN(parts[1])) {
+                document.getElementById('result').innerHTML = "❌ <b>Format Error</b><br>Enter valid numbers like: 40.7484, -73.9857";
+                return;
+            }
+            triggerLocationProcessing(parseFloat(parts[0]), parseFloat(parts[1]));
+        }
+
+        // General UI Reset
+        function resetPage() {
+            currentLat = null;
+            currentLon = null;
+            document.getElementById('result').innerHTML = "Your recommendation will appear here...";
+            document.getElementById('manual-coords').value = "";
+            document.getElementById('filter-group').style.display = "none";
+            document.getElementById('map').style.display = "none";
+            
+            // Destroy the map instance so it can spawn cleanly next time
+            if (map) { map.remove(); map = null; }
+        }
+    </script>
+</body>
+</html>
