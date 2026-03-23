@@ -17,23 +17,29 @@
         .btn-secondary { background: #e0e0e0; color: #333; }
         
         /* Map and Filters */
-        #map { height: 250px; width: 100%; margin-top: 15px; border-radius: 8px; display: none; z-index: 1;}
+        #map { height: 250px; width: 100%; margin-top: 15px; border-radius: 8px; display: none; z-index: 1000; position: sticky; top: 10px; box-shadow: 0 4px 10px rgba(0,0,0,0.15); border: 2px solid #fff;}
 
-        .filter-group { display: none; justify-content: space-around; margin: 20px 0 10px; }
-        .filter-btn { padding: 8px; width: 30%; font-size: 14px; margin: 0; background: #eee; color: #333; border-radius: 20px; }
+        .filter-group { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin: 20px 0 10px; display: none;}
+        .filter-btn { padding: 8px; font-size: 14px; margin: 0; background: #eee; color: #333; border-radius: 20px; flex: 1; min-width: 80px;}
         .filter-btn.active { background: #0070f3; color: white; }
 
         /* Recommendation List */
         .rec-list { list-style: none; padding: 0; text-align: left; }
-        .rec-item { padding: 15px 0; border-bottom: 1px solid #eee; }
+        .rec-item { padding: 15px 0; border-bottom: 1px solid #eee; transition: background 0.2s; cursor: pointer; }
+        .rec-item:hover { background: #fafafa; }
+        .rec-item.closed { opacity: 0.5; }
         .rec-item:last-child { border-bottom: none; }
         .rec-title { font-weight: bold; font-size: 16px; color: #333; display: flex; justify-content: space-between; align-items: center; }
+        .title-left { display: flex; align-items: center; gap: 8px; }
+        .save-btn { background: none; border: none; font-size: 18px; cursor: pointer; padding: 0; margin: 0; }
         .rec-meta { font-size: 13px; color: #666; margin: 6px 0; }
         .rec-desc { font-size: 14px; color: #444; }
         .badge { font-size: 11px; padding: 3px 8px; border-radius: 12px; color: white; font-weight: normal; }
         .badge.food { background: #ff9800; }
         .badge.activity { background: #34a853; }
-        .map-link { display: inline-block; margin-top: 8px; font-size: 13px; color: #0070f3; text-decoration: none; font-weight: bold; }
+        .badge.closed-badge { background: #d9534f; margin-left: 5px; }
+        .links-row { display: flex; gap: 15px; margin-top: 10px;}
+        .map-link { font-size: 13px; color: #0070f3; text-decoration: none; font-weight: bold; display: flex; align-items: center; gap: 4px; }
     </style>
 </head>
 <body>
@@ -57,6 +63,7 @@
             <button class="filter-btn active" onclick="setFilter('All', this)">All</button>
             <button class="filter-btn" onclick="setFilter('Food', this)">🍔 Food</button>
             <button class="filter-btn" onclick="setFilter('Activity', this)">🏛️ Activities</button>
+            <button class="filter-btn" onclick="setFilter('Saved', this)">⭐ Saved</button>
         </div>
 
         <!-- Results output -->
@@ -72,6 +79,24 @@
         let map = null;
         let markers = [];
         let currentFilter = 'All';
+        let savedSpots = JSON.parse(localStorage.getItem('nyc_saved_spots')) || [];
+
+        function toggleSave(name, event) {
+            event.stopPropagation(); // prevent map fly-to from triggering
+            if (savedSpots.includes(name)) savedSpots = savedSpots.filter(n => n !== name);
+            else savedSpots.push(name);
+            localStorage.setItem('nyc_saved_spots', JSON.stringify(savedSpots));
+            renderUI();
+        }
+
+        // Fly the map to the specific pin and open its popup when list item is clicked
+        function focusMap(lat, lon, index) {
+            if (map && markers[index]) {
+                map.flyTo([lat, lon], 16, { duration: 1.5 });
+                markers[index].openPopup();
+                window.scrollTo({ top: document.getElementById('map').offsetTop - 20, behavior: 'smooth' });
+            }
+        }
 
         // Databases updated with exact latitude/longitude coordinates to allow Haversine distance calculations
         const midtown = [
@@ -144,9 +169,8 @@
             
             if (!map) {
                 map = L.map('map').setView([lat, lon], 14);
-                // Free, clean map tiles
                 L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
-                    attribution: '&copy; OpenStreetMap &copy; CARTO'
+                    attribution: '&copy; OpenStreetMap'
                 }).addTo(map);
             } else {
                 map.setView([lat, lon], 14);
@@ -162,11 +186,12 @@
                 iconSize: [30, 30]
             });
             const userMarker = L.marker([lat, lon], {icon: userIcon}).addTo(map).bindPopup("<b>📍 You are here</b>").openPopup();
-            markers.push(userMarker);
-
-            // Add Destination Pins (Default leaflet blue/grey)
-            places.forEach((p, idx) => {
-                const marker = L.marker([p.lat, p.lon]).addTo(map).bindPopup(`<b>${idx + 1}. ${p.name}</b><br>${p.desc}`);
+            
+            // Generate markers for everything FIRST, but push to array so focusMap(index) matches array order accurately
+            places.forEach((p, listIndex) => {
+                const isSaved = savedSpots.includes(p.name);
+                const markerHtml = `<b>${listIndex + 1}. ${p.name}</b> ${isSaved ? '⭐' : ''}<br>${p.desc}`;
+                const marker = L.marker([p.lat, p.lon]).addTo(map).bindPopup(markerHtml);
                 markers.push(marker);
             });
         }
@@ -179,52 +204,94 @@
             renderUI();
         }
 
+        // Closures Map
+        const knownClosures = {
+            "The Metropolitan Museum of Art": [3], // Wed
+            "Whitney Museum of American Art": [2], // Tue
+            "Brooklyn Museum": [1, 2], // Mon, Tue
+            "Museum of the Moving Image": [1, 2, 3], // Mon-Wed
+            "Margon": [0], // Sun
+            "Kopitiam": [2, 3] // Tue, Wed
+        };
+
         // The core rendering engine
         function renderUI() {
             if (!currentLat || !currentLon || !currentActiveList.length) return;
 
-            // 1. Calculate Exact Distance and Filter Pricing
-            let processedList = currentActiveList.map(item => {
-                return { ...item, dist: getDistance(currentLat, currentLon, item.lat, item.lon) };
-            }).filter(item => item.cost !== '$$$'); // Allow cheap & medium, exclude explicitly expensive 
+            const currentDay = new Date().getDay(); // 0 = Sunday, 1 = Monday...
 
-            // Sort by nearest distance first
+            // Calculate Distance, Filter Pricing, Identify Closures
+            let processedList = currentActiveList.map(item => {
+                const closedDays = knownClosures[item.name] || [];
+                return { 
+                    ...item, 
+                    dist: getDistance(currentLat, currentLon, item.lat, item.lon),
+                    isClosedToday: closedDays.includes(currentDay)
+                };
+            }).filter(item => item.cost !== '$$$'); 
+
+            // Sort nearest first
             processedList.sort((a, b) => a.dist - b.dist);
 
-            // Separate into top 10 food and top 10 activities (regardless of how far, as we removed the hard 1-mile cutoff)
+            // Filter out by Saved if that tab is active
+            if (currentFilter === 'Saved') {
+                processedList = processedList.filter(item => savedSpots.includes(item.name));
+            }
+
+            // Route lists
             const foodSpots = processedList.filter(item => item.type === 'Food').slice(0, 10);
             const activitySpots = processedList.filter(item => item.type === 'Activity').slice(0, 10);
 
-            // 3. Render the HTML List
-            const res = document.getElementById('result');
+            let pinsToMap = [];
             let html = '';
+
+            const res = document.getElementById('result');
 
             const buildListHTML = (title, items) => {
                 if (items.length === 0) return `<p style="padding:10px; color:#777; font-size:14px; background:#f9f9f9; border-radius:8px;">No ${title.toLowerCase()} found.</p>`;
                 
                 let listHtml = `<h3 style="text-align:left; color:#333; margin-top: 25px; border-bottom: 2px solid #eee; padding-bottom: 5px;">${title}</h3><ul class="rec-list">`;
-                items.forEach((item, index) => {
+                
+                items.forEach(item => {
                     const badgeClass = item.type === 'Activity' ? 'activity' : 'food';
+                    const isSaved = savedSpots.includes(item.name);
+                    const closedClass = item.isClosedToday ? 'closed' : '';
+
+                    // The index of this item in the overarching map pins array
+                    pinsToMap.push(item);
+                    const mapIndex = pinsToMap.length - 1;
+
+                    // Dual Map Links
+                    const encodedName = encodeURIComponent(item.name + ' NYC');
+                    const walkUrl = `https://www.google.com/maps/dir/?api=1&destination=${encodedName}&travelmode=walking`;
+                    const transitUrl = `https://www.google.com/maps/dir/?api=1&destination=${encodedName}&travelmode=transit`;
                     
-                    // Use Place Title + "NYC" into the Maps search query rather than generic GPS coordinates
-                    const mapsUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(item.name + ' NYC')}`;
-                    
-                    // Flag results exceeding 1 mile
                     const distanceLabel = item.dist <= 1.0 
-                        ? `📍 <b>${item.dist.toFixed(2)} mi away</b>` 
-                        : `📍 <b style="color: #d9534f;">${item.dist.toFixed(2)} mi away ⚠️ (Over 1 mile walk)</b>`;
+                        ? `📍 <b>${item.dist.toFixed(2)} mi</b>` 
+                        : `📍 <b style="color: #d9534f;">${item.dist.toFixed(2)} mi (Far)</b>`;
                     
                     listHtml += `
-                        <li class="rec-item">
+                        <li class="rec-item ${closedClass}" onclick="focusMap(${item.lat}, ${item.lon}, ${mapIndex})">
                             <div class="rec-title">
-                                <span>${index + 1}. ${item.name}</span>
-                                <span class="badge ${badgeClass}">${item.type}</span>
+                                <div class="title-left">
+                                    <button class="save-btn" onclick="toggleSave('${item.name.replace(/'/g, "\\'")}', event)">
+                                        ${isSaved ? '⭐' : '☆'}
+                                    </button>
+                                    <span>${item.name}</span>
+                                </div>
+                                <div>
+                                    <span class="badge ${badgeClass}">${item.type}</span>
+                                    ${item.isClosedToday ? '<span class="badge closed-badge">Closed Today</span>' : ''}
+                                </div>
                             </div>
                             <div class="rec-meta">
                                 ${distanceLabel} &nbsp;•&nbsp; ⭐ ${item.rating} &nbsp;•&nbsp; 💰 ${item.cost} (${item.range})
                             </div>
                             <div class="rec-desc">${item.desc}</div>
-                            <a href="${mapsUrl}" target="_blank" class="map-link">🗺️ Google Maps Directions →</a>
+                            <div class="links-row">
+                                <a href="${walkUrl}" target="_blank" onclick="event.stopPropagation()" class="map-link">🚶‍♂️ Walking Route</a>
+                                <a href="${transitUrl}" target="_blank" onclick="event.stopPropagation()" class="map-link">🚇 Subway Route</a>
+                            </div>
                         </li>
                     `;
                 });
@@ -232,22 +299,18 @@
                 return listHtml;
             };
 
-            let pinsToMap = [];
             if (currentFilter === 'All') {
                 html += buildListHTML('🍔 Top 10 Food', foodSpots);
                 html += buildListHTML('🏛️ Top 10 Activities', activitySpots);
-                pinsToMap = [...foodSpots, ...activitySpots];
             } else if (currentFilter === 'Food') {
                 html += buildListHTML('🍔 Top 10 Food', foodSpots);
-                pinsToMap = foodSpots;
             } else if (currentFilter === 'Activity') {
                 html += buildListHTML('🏛️ Top 10 Activities', activitySpots);
-                pinsToMap = activitySpots;
+            } else if (currentFilter === 'Saved') {
+                html += buildListHTML('⭐ Your Itinerary', processedList);
             }
 
             res.innerHTML = html;
-
-            // 4. Update the visual Leaflet map above the list
             updateMap(currentLat, currentLon, pinsToMap);
         }
 
