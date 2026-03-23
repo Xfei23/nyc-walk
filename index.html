@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NYC Walking Guide</title>
+    <style>
+        body { font-family: -apple-system, sans-serif; text-align: center; padding: 20px; background: #f0f2f5; }
+        .card { background: white; padding: 30px; border-radius: 15px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); max-width: 500px; margin: auto; }
+        
+        /* Button Styles */
+        button { width: 100%; padding: 15px; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; cursor: pointer; margin-top: 10px; transition: 0.2s; }
+        .btn-primary { background: #0070f3; color: white; }
+        .btn-secondary { background: #e0e0e0; color: #333; }
+        .btn-maps { background: #34a853; color: white; display: none; text-decoration: none; line-height: 45px; text-align: center; border-radius: 8px; margin-top: 10px; font-weight: bold;}
+        
+        #result { margin-top: 25px; line-height: 1.6; font-size: 18px; min-height: 50px; }
+        .coords-display { color: #666; font-size: 12px; margin-top: 10px; height: 15px; }
+
+        /* Recommendation Styles */
+        .rec-list { list-style: none; padding: 0; text-align: left; }
+        .rec-item { padding: 15px 0; border-bottom: 1px solid #eee; }
+        .rec-item:last-child { border-bottom: none; }
+        .rec-title { font-weight: bold; font-size: 16px; color: #333; display: flex; justify-content: space-between; align-items: center; }
+        .rec-meta { font-size: 13px; color: #666; margin: 4px 0; }
+        .rec-desc { font-size: 14px; color: #444; }
+        .badge { font-size: 11px; padding: 3px 8px; border-radius: 12px; color: white; font-weight: normal; }
+        .badge.food { background: #ff9800; }
+        .badge.activity { background: #34a853; }
+    </style>
+</head>
+<body>
+
+    <div class="card">
+        <h1>🗽 NYC Guide</h1>
+        <p>Stand on a corner and tap below:</p>
+        
+        <button class="btn-primary" onclick="getLocation()">Where am I? (GPS)</button>
+
+        <p style="margin: 15px 0 5px; font-size: 14px; color: #666;">Or enter coordinates manually:</p>
+        <input type="text" id="manual-coords" placeholder="e.g. 40.7484, -73.9857" style="width: calc(100% - 22px); padding: 10px; border: 1px solid #ccc; border-radius: 8px; margin-bottom: 10px; font-family: inherit;">
+        <button class="btn-secondary" onclick="getManualLocation()" style="background: #6c757d; color: white;">Search Coordinates</button>
+        
+        <a id="maps-link" class="btn-maps" target="_blank">🗺️ View on Google Maps</a>
+        
+        <button class="btn-secondary" onclick="resetPage()">Reset</button>
+
+        <div id="result">Your recommendation will appear here...</div>
+        <div id="coords-display" class="coords-display"></div>
+    </div>
+
+    <script>
+        // Recommendation Databases
+        const midtown = [
+            { name: "The Halal Guys", type: "Food", cost: "$", rating: "4.5/5", address: "53rd St & 6th Ave", desc: "Legendary chicken & rice cart with white sauce." },
+            { name: "2 Bros Pizza", type: "Food", cost: "$", rating: "4.0/5", address: "8th Ave & 38th St", desc: "The quintessential NYC $1.50 minimum street slice." },
+            { name: "The High Line", type: "Activity", cost: "Free", rating: "4.8/5", address: "Gansevoort St to 34th St", desc: "Walking path built on a historic elevated freight rail line." },
+            { name: "Los Tacos No. 1", type: "Food", cost: "$", rating: "4.7/5", address: "229 W 43rd St", desc: "Arguably the best, most authentic cheap tacos in the area." },
+            { name: "New York Public Library", type: "Activity", cost: "Free", rating: "4.9/5", address: "476 5th Ave", desc: "Stunning architecture. View the beautiful Rose Main Reading Room." },
+            { name: "Bryant Park", type: "Activity", cost: "Free", rating: "4.8/5", address: "42nd St & 6th Ave", desc: "A peaceful green oasis surrounded by skyscrapers, great for lunch." },
+            { name: "Margon", type: "Food", cost: "$", rating: "4.6/5", address: "136 W 46th St", desc: "Hidden gem serving massive, cheap plates of tasty Cuban food." },
+            { name: "Grand Central Terminal", type: "Activity", cost: "Free", rating: "4.8/5", address: "89 E 42nd St", desc: "Marvel at the celestial ceiling in the main concourse." },
+            { name: "Empanada Mama", type: "Food", cost: "$", rating: "4.5/5", address: "765 9th Ave", desc: "Incredible selection of cheap, filling Colombian empanadas." },
+            { name: "Burger Joint", type: "Food", cost: "$$", rating: "4.3/5", address: "119 W 56th St", desc: "A gritty, delicious burger spot hidden behind a curtain in a fancy hotel." }
+        ];
+
+        const downtown = [
+            { name: "Mamoun's Falafel", type: "Food", cost: "$", rating: "4.6/5", address: "119 MacDougal St", desc: "The oldest falafel restaurant in NYC. Amazing, cheap sandwiches." },
+            { name: "Staten Island Ferry", type: "Activity", cost: "Free", rating: "4.7/5", address: "Whitehall Terminal", desc: "Free 25-minute boat ride with the best view of the Statue of Liberty." },
+            { name: "Joe's Pizza", type: "Food", cost: "$", rating: "4.6/5", address: "7 Carmine St", desc: "The classic Greenwich Village slice. Frequented by celebrities." },
+            { name: "Washington Square Park", type: "Activity", cost: "Free", rating: "4.8/5", address: "Greenwich Village", desc: "Iconic arch, street performers, and prime people-watching." },
+            { name: "Wah Fung No 1", type: "Food", cost: "$", rating: "4.8/5", address: "79 Chrystie St", desc: "Legendary massive portions of roast pork and chicken over rice." },
+            { name: "Brooklyn Bridge Walk", type: "Activity", cost: "Free", rating: "4.9/5", address: "City Hall Park", desc: "Walk across the iconic bridge roughly 1.1 miles into Brooklyn." },
+            { name: "Vanessa's Dumpling", type: "Food", cost: "$", rating: "4.4/5", address: "118 Eldridge St", desc: "Extremely cheap and delicious pan-fried dumplings." },
+            { name: "Tompkins Sq Bagels", type: "Food", cost: "$", rating: "4.5/5", address: "165 Avenue A", desc: "Massive, fresh bagels with wildly creative cream cheese options." },
+            { name: "9/11 Memorial Pools", type: "Activity", cost: "Free", rating: "4.9/5", address: "180 Greenwich St", desc: "The outdoor memorial pools are free to visit and deeply moving." },
+            { name: "Kopitiam", type: "Food", cost: "$", rating: "4.6/5", address: "151 E Broadway", desc: "Authentic, affordable Malaysian coffeehouse snacks and dishes." }
+        ];
+
+        const uptown = [
+            { name: "Absolute Bagels", type: "Food", cost: "$", rating: "4.7/5", address: "2788 Broadway", desc: "Often rated the absolute best bagel in Manhattan, fresh and cheap." },
+            { name: "Central Park Reservoir", type: "Activity", cost: "Free", rating: "4.8/5", address: "86th to 96th St", desc: "A gorgeous 1.5-mile running/walking track with skyline reflections." },
+            { name: "Koronet Pizza", type: "Food", cost: "$", rating: "4.3/5", address: "2848 Broadway", desc: "Famous for their hilariously massive, arm-length pizza slices." },
+            { name: "Columbia Univ. Campus", type: "Activity", cost: "Free", rating: "4.7/5", address: "116th & Broadway", desc: "Beautiful neoclassical campus architecture open to walk through." },
+            { name: "Roti Roll", type: "Food", cost: "$", rating: "4.6/5", address: "994 Amsterdam Ave", desc: "Incredible Indian street food, wrapping curries in warm parathas." },
+            { name: "Grant's Tomb", type: "Activity", cost: "Free", rating: "4.5/5", address: "Riverside & 122nd", desc: "The largest mausoleum in North America, beautifully situated." },
+            { name: "Taqueria y Fonda", type: "Food", cost: "$", rating: "4.5/5", address: "968 Amsterdam Ave", desc: "Massive, affordable burritos and authentic Mexican comfort food." },
+            { name: "Riverside Park", type: "Activity", cost: "Free", rating: "4.7/5", address: "Hudson River Greenway", desc: "A quieter, stunning alternative to Central Park right on the water." },
+            { name: "Hungarian Pastry Shop", type: "Food", cost: "$", rating: "4.6/5", address: "1030 Amsterdam", desc: "Cozy, old-school cafe filled with students, cheap coffee, & strudels." },
+            { name: "Levain Bakery", type: "Food", cost: "$$", rating: "4.8/5", address: "167 W 74th St", desc: "World-famous 6-ounce cookies. Easily shareable and a local staple." }
+        ];
+
+        const generic = [
+            { name: "NYC Ferry", type: "Activity", cost: "$4.00", rating: "4.8/5", address: "Multiple Piers", desc: "The cheapest, best sightseeing cruise you'll ever take on the river." },
+            { name: "Flushing Meadows", type: "Activity", cost: "Free", rating: "4.6/5", address: "Queens", desc: "See the iconic Unisphere and the history of two World's Fairs." },
+            { name: "L'Industrie Pizzeria", type: "Food", cost: "$", rating: "4.8/5", address: "254 S 2nd St, BK", desc: "New school Brooklyn slice shop with imported Italian ingredients." },
+            { name: "Roosevelt Island Tram", type: "Activity", cost: "$2.90", rating: "4.7/5", address: "E 59th St", desc: "Take a suspended cable car over the East River using a MetroCard." },
+            { name: "Los Mariscos", type: "Food", cost: "$", rating: "4.7/5", address: "Chelsea Market", desc: "Outstanding cheap fish tacos and ceviche down a hidden hallway." },
+            { name: "Prospect Park", type: "Activity", cost: "Free", rating: "4.8/5", address: "Brooklyn", desc: "Designed by the Central Park architects, but wilder and less crowded." },
+            { name: "Tacos El Bronco", type: "Food", cost: "$", rating: "4.7/5", address: "Sunset Park", desc: "Arguably the best authentic taco truck in the outer boroughs." },
+            { name: "Williamsburg Bridge", type: "Activity", cost: "Free", rating: "4.6/5", address: "Delancey St", desc: "Walk to Brooklyn covered in raw street art with a great skyline view." },
+            { name: "Jackson Diner", type: "Food", cost: "$$", rating: "4.4/5", address: "Jackson Heights", desc: "Famous Indian buffet offering incredible value for unlimited food." },
+            { name: "Astoria Park", type: "Activity", cost: "Free", rating: "4.7/5", address: "Astoria, Queens", desc: "Stunning views of the Triborough and Hell Gate bridges along the water." }
+        ];
+
+        function renderRecommendations(regionTitle, recs) {
+            let html = `<h2 style="color:#0070f3; margin-top: 30px;">📍 ${regionTitle}</h2>`;
+            html += '<p style="font-size: 14px; margin-bottom: 20px; color: #555;">Top 10 Budget & Free Spots Nearby</p>';
+            html += '<ul class="rec-list">';
+            
+            recs.forEach((item, index) => {
+                const badgeClass = item.type === 'Activity' ? 'activity' : 'food';
+                html += `
+                    <li class="rec-item">
+                        <div class="rec-title">
+                            <span>${index + 1}. ${item.name}</span>
+                            <span class="badge ${badgeClass}">${item.type}</span>
+                        </div>
+                        <div class="rec-meta">
+                            ⭐ ${item.rating} &nbsp;•&nbsp; 💰 ${item.cost} &nbsp;•&nbsp; 🗺️ ${item.address}
+                        </div>
+                        <div class="rec-desc">${item.desc}</div>
+                    </li>
+                `;
+            });
+            html += '</ul>';
+            return html;
+        }
+
+        function getLocation() {
+            const res = document.getElementById('result');
+            res.innerHTML = "Fetching your location... 📡";
+            
+            const options = {
+                enableHighAccuracy: false, 
+                timeout: 10000,            
+                maximumAge: 60000          
+            };
+
+            if (navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition(showPosition, (error) => {
+                    res.innerHTML = "❌ Error: " + (error.message || "Could not fetch location.");
+                }, options);
+            } else {
+                res.innerHTML = "❌ Geolocation is not supported by this browser.";
+            }
+        }
+
+        function showPosition(position) {
+            const lat = position.coords.latitude;
+            const lon = position.coords.longitude;
+            
+            const res = document.getElementById('result');
+            const mapsBtn = document.getElementById('maps-link');
+
+            // 1. Check if user is actually in NYC limits
+            if (lat < 40.47 || lat > 40.91 || lon < -74.25 || lon > -73.70) {
+                res.innerHTML = "❌ <b>Out of Bounds</b><br><br>You don't appear to be in New York City! This guide only works in the 5 boroughs.";
+                document.getElementById('coords-display').innerHTML = `GPS: ${lat.toFixed(4)}, ${lon.toFixed(4)}`;
+                mapsBtn.style.display = "none";
+                return;
+            }
+
+            // 2. Update the GPS text
+            document.getElementById('coords-display').innerHTML = `GPS: ${lat.toFixed(4)}, ${lon.toFixed(4)}`;
+            
+            // 3. Build the Google Maps URL and show the button
+            mapsBtn.href = `https://www.google.com/maps?q=${lat},${lon}`;
+            mapsBtn.style.display = "block";
+            
+            // 4. Recommendation Logic
+            let regionTitle = "";
+            let list = [];
+            
+            if (lat >= 40.741 && lat <= 40.765) {
+                regionTitle = "Midtown Manhattan";
+                list = midtown;
+            } else if (lat < 40.73) {
+                regionTitle = "Downtown Manhattan";
+                list = downtown;
+            } else if (lat > 40.77) {
+                regionTitle = "Uptown Manhattan";
+                list = uptown;
+            } else {
+                regionTitle = "NYC Outer Boroughs";
+                list = generic;
+            }
+            
+            res.innerHTML = renderRecommendations(regionTitle, list);
+        }
+
+        function getManualLocation() {
+            const input = document.getElementById('manual-coords').value;
+            const res = document.getElementById('result');
+            
+            const parts = input.replace(/\s+/g, '').split(',');
+            if (parts.length !== 2 || isNaN(parts[0]) || isNaN(parts[1])) {
+                res.innerHTML = "❌ <b>Format Error</b><br><br>Please enter valid numbers like: 40.7484, -73.9857";
+                return;
+            }
+
+            const lat = parseFloat(parts[0]);
+            const lon = parseFloat(parts[1]);
+
+            showPosition({ coords: { latitude: lat, longitude: lon } });
+        }
+
+        function resetPage() {
+            document.getElementById('result').innerHTML = "Your recommendation will appear here...";
+            document.getElementById('coords-display').innerHTML = "";
+            document.getElementById('maps-link').style.display = "none";
+            document.getElementById('manual-coords').value = "";
+        }
+    </script>
+</body>
+</html>
